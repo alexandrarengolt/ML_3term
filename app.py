@@ -255,32 +255,37 @@ elif page == "Страница 4: Предсказание модели":
         df_pycaret = df_23.copy()
         df_pycaret["CO(GT)"] = 0.0
 
-        if model is not None:
-            try:
-                # А) Логика для Глубокой нейросети (ML6)
-                if "ML6" in model_choice:
-                    # Проверяем, сколько входов у нейросети
-                    expected_features = model.input_shape[1] 
-                    if expected_features == 11:
-                        features = df_11.to_numpy(dtype=np.float32)
-                    else:
-                        features = df_23.to_numpy(dtype=np.float32)
-                    
-                    prediction = model.predict(features, verbose=0)[0][0]
-                
-                # Б) Умная логика автоматического подбора для ML1 - ML5 (PyCaret, CatBoost, Sklearn)
-                else:
-                    # Поочередно пробуем скормить модели разные структуры данных, пока одна не подойдет
+        # Универсальный безопасный инференс для всех типов моделей (включая CatBoost)
+if model is not None:
+    # Если по какой-то причине загрузился чистый массив вместо объекта модели
+    if isinstance(model, np.ndarray):
+        prediction = float(model[0]) if model.ndim > 0 else float(model)
+    else:
+        try:
+            if "ML6" in model_choice:  # Нейросеть TensorFlow
+                expected_features = model.input_shape[1]
+                features = df_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_23.to_numpy(dtype=np.float32)
+                prediction = model.predict(features, verbose=0)[0][0]
+            else:  # Классика, Бустинги (CatBoost) и Ансамбли
+                try:
+                    res = model.predict(df_23)
+                    # Если CatBoost или Sklearn вернули массив, извлекаем число
+                    prediction = res[0] if isinstance(res, np.ndarray) else res
+                except ValueError:
                     try:
-                        # 1. Пробуем передать чистые 23 признака (обычно подходит для ML1 и ML3)
-                        prediction = model.predict(df_23)[0]
+                        res = model.predict(df_pycaret)
+                        prediction = res[0] if isinstance(res, np.ndarray) else res
                     except ValueError:
-                        try:
-                            # 2. Если упало, пробуем передать структуру PyCaret со столбцом-заглушкой
-                            prediction = model.predict(df_pycaret)[0]
-                        except ValueError:
-                            # 3. Если и это упало, значит модель ждет только базовые 11 датчиков
-                            prediction = model.predict(df_11)[0]
+                        res = model.predict(df_11)
+                        prediction = res[0] if isinstance(res, np.ndarray) else res
+                        
+            # Если на выходе случайно получился массив (специфика CatBoost/Keras)
+            if isinstance(prediction, np.ndarray):
+                prediction = prediction.flatten()[0]
+                
+        except Exception as e:
+            st.error(f"Ошибка вызова модели: {e}. Проверь структуру входного вектора.")
+            prediction = 0.0
                 
                 # 3. Вывод результатов на дашборд
                 st.subheader("Результат расчета:")
