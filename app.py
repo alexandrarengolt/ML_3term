@@ -293,41 +293,104 @@ elif page == "Страница 4: Предсказание модели":
         # ==========================================================
         # БЛОК 2: ПАКЕТНЫЙ ИНФЕРЕНС ИЗ ФАЙЛОВ (.CSV)
         # ==========================================================
+        # ==========================================================
+        # БЛОК 2: ПАКЕТНЫЙ ИНФЕРЕНС ИЗ ФАЙЛОВ (.CSV)
+        # ==========================================================
         st.markdown("---")
-        st.markdown("### Пакетный инференс (Загрузка файла данных)")
-        uploaded_file = st.file_uploader("Выберите файл данных в формате *.csv для массового расчета:", type="csv")
+        st.markdown("### Пакетный инференс (Обработка массивов данных)")
+        
+        data_source = st.radio(
+            "Выберите источник данных для пакетного расчета:",
+            ["Использовать демонстрационный датасет", "Загрузить свой файл (.csv)"]
+        )
 
-        if uploaded_file is not None:
-            user_df = pd.read_csv(uploaded_file)
-            st.markdown("**Фрагмент загруженного файла (Первые 5 строк):**")
+        user_df = None
+
+        if data_source == "Использовать демонстрационный датасет":
+            demo_file_path = "X_test.csv" 
+            if os.path.exists(demo_file_path):
+                user_df = pd.read_csv(demo_file_path)
+                st.info("Загружен демонстрационный датасет из репозитория.")
+            else:
+                st.warning(f"Файл `{demo_file_path}` не найден в репозитории. Пожалуйста, загрузите его вручную.")
+        
+        elif data_source == "Загрузить свой файл (.csv)":
+            uploaded_file = st.file_uploader("Выберите файл данных в формате *.csv для массового расчета:", type="csv")
+            if uploaded_file is not None:
+                user_df = pd.read_csv(uploaded_file)
+
+        if user_df is not None:
+            st.markdown("**Фрагмент набора данных (Первые 5 строк):**")
             st.dataframe(user_df.head(5))
 
             if st.button("Запустить пакетный расчет всего файла", type="secondary"):
                 base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
                 
-                # Проверяем, есть ли хотя бы 11 базовых колонок датчиков в загруженном файле
+                # Проверяем наличие 11 базовых колонок
                 missing_cols = [col for col in base_11_features if col not in user_df.columns]
                 
                 if not missing_cols:
                     try:
-                        batch_features = user_df[base_11_features]
+                        # Автоматический Feature Engineering для пакета данных
+                        batch_df = user_df.copy()
                         
-                        # Векторизованный параллельный инференс
-                        if "ML6" in model_choice:
-                            raw_preds = model.predict(batch_features.to_numpy(dtype=np.float32), verbose=0)
-                            predictions_array = raw_preds.flatten()
-                        else:
-                            raw_preds = model.predict(batch_features)
-                            predictions_array = raw_preds.flatten()
+                        # Если в датасете нет временных колонок, создаем дефолтные (как в интерфейсе)
+                        if "year" not in batch_df.columns:
+                            batch_df["year"] = chosen_date.year
+                            batch_df["month"] = chosen_date.month
+                            batch_df["Day"] = chosen_date.day
+                            batch_df["hour"] = chosen_hour
+                            weekday = chosen_date.weekday()
+                            batch_df["is_weekend"] = 1 if weekday >= 5 else 0
+                            
+                            # Генерируем One-Hot Encoding для дней недели со строгими префиксами "Day_"
+                            days_mapping = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
+                            for day_col in days_mapping:
+                                batch_df[day_col] = 0
+                            batch_df[days_mapping[weekday]] = 1
 
-                        # Интеграция вектора предсказаний обратно в файл
+                        # Формируем матрицы нужной геометрии для проверки моделей
+                        extended_columns = base_11_features + [
+                            "year", "month", "Day", "hour", "is_weekend", 
+                            "Day_Monday", "Day_Tuesday", "Day_Wednesday", 
+                            "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
+                        ]
+                        
+                        df_batch_11 = batch_df[base_11_features]
+                        df_batch_23 = batch_df[extended_columns]
+                        df_batch_pycaret = df_batch_23.copy()
+                        df_batch_pycaret["CO(GT)"] = 0.0
+
+                        # Безопасный инференс для пакета данных
+                        if "ML6" in model_choice:  # Нейросеть
+                            expected_features = model.input_shape[1]
+                            features_matrix = df_batch_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_batch_23.to_numpy(dtype=np.float32)
+                            raw_preds = model.predict(features_matrix, verbose=0)
+                            predictions_array = raw_preds.flatten()
+                        else:  # Классика, CatBoost, Ансамбли
+                            try:
+                                raw_preds = model.predict(df_batch_23)
+                            except ValueError:
+                                try:
+                                    raw_preds = model.predict(df_batch_pycaret)
+                                except ValueError:
+                                    raw_preds = model.predict(df_batch_11)
+                            
+                            # Фикс ошибки 'numpy.ndarray' object has no attribute 'predict'
+                            # Извлекаем одномерный массив, если модель вернула матрицу или сложный объект
+                            if hasattr(raw_preds, "flatten"):
+                                predictions_array = raw_preds.flatten()
+                            else:
+                                predictions_array = np.array(raw_preds).flatten()
+
+                        # Интеграция результатов в итоговую таблицу
                         result_df = user_df.copy()
                         result_df["Predicted_CO(GT)"] = predictions_array
 
                         st.success(f"Массовый расчет завершен! Успешно обработано строк: {len(result_df)}")
                         st.dataframe(result_df.head(10))
 
-                        # Генерация кнопки скачивания готовой таблицы
+                        # Генерация кнопки скачивания
                         csv_buffer = result_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             label="Скачать файл с результатами предсказаний",
@@ -338,4 +401,4 @@ elif page == "Страница 4: Предсказание модели":
                     except Exception as batch_error:
                         st.error(f"Ошибка при обработке массива данных: {batch_error}")
                 else:
-                    st.error(f"В загруженном CSV отсутствуют необходимые колонки факторов: {missing_cols}")
+                    st.error(f"В загруженном датасете отсутствуют необходимые колонки факторов: {missing_cols}")
