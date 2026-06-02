@@ -153,7 +153,6 @@ elif page == "Страница 3: Визуализация зависимост�
         st.image("plot3.png",  width="stretch")
 
 
-#СТРАНИЦА 4
 elif page == "Страница 4: Предсказание модели":
     st.title("Получение предсказаний модели")
     st.markdown("---")
@@ -208,73 +207,66 @@ elif page == "Страница 4: Предсказание модели":
 
         st.markdown("---")
 
-        # 11 базовых признаков в строгом порядке
+        # Набор из 11 базовых фичей (для нейросети, если она обучалась только на датчиках)
         base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
-        
-        # Точный расширенный список колонок, совпадающий с твоим обучением (включая таргет в начале)
-        exact_train_columns = [
-            "CO(GT)", "PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", 
-            "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH", 
-            "Hour", "DayName", "IsWeekend", 
+
+        # ЭТАЛОННЫЙ ПОРЯДОК 23 КОЛОНОК (Строго как в твоем Regression_data.csv, но без CO(GT))
+        exact_features_23 = [
+            "PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", 
+            "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH", 
+            "Year", "Month", "Day", "Hour", "IsWeekend", 
             "Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
         ]
 
         # КНОПКА ЗАПУСКА ОДИНОЧНОГО РАСЧЕТА
         if st.button("Рассчитать концентрацию CO(GT)", type="primary"):
-            # Расчет фичей времени по твоим правилам
+            # Расчет временных фичей (с соблюдением регистра заглавных букв)
+            year_val = chosen_date.year
+            month_val = chosen_date.month
+            day_val = chosen_date.day
             weekday = chosen_date.weekday()
             is_weekend_val = 1 if weekday >= 5 else 0
-            
-            days_eng = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            day_name_val = days_eng[weekday]
 
+            # One-Hot Encoding для дней недели
             days_ohe = {
                 "Day_Monday": 0, "Day_Tuesday": 0, "Day_Wednesday": 0, 
                 "Day_Thursday": 0, "Day_Friday": 0, "Day_Saturday": 0, "Day_Sunday": 0
             }
-            days_ohe[f"Day_{day_name_val}"] = 1
+            days_list = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
+            days_ohe[days_list[weekday]] = 1
 
-            # Собираем DataFrame по твоему точному порядку колонок (с заглушкой 0.0 для таргета на первом месте)
-            df_full = pd.DataFrame([[
-                0.0, s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
-                chosen_hour, day_name_val, is_weekend_val,
+            # Собираем идеальный DataFrame из 23 колонок в правильном порядке
+            df_inference = pd.DataFrame([[
+                s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
+                year_val, month_val, day_val, chosen_hour, is_weekend_val,
                 days_ohe["Day_Monday"], days_ohe["Day_Tuesday"], days_ohe["Day_Wednesday"],
                 days_ohe["Day_Thursday"], days_ohe["Day_Friday"], days_ohe["Day_Saturday"], days_ohe["Day_Sunday"]
-            ]], columns=exact_train_columns)
+            ]], columns=exact_features_23)
 
-            # Матрица для нейросетей (чистые 11 фичей)
-            df_11 = df_full[base_11_features]
-            
-            # Матрица без таргета (на случай, если какая-то модель строго просит 21 признак без CO(GT))
-            df_no_target = df_full.drop(columns=["CO(GT)"])
+            # Выделяем срез из 11 фичей для нейросети
+            df_inference_11 = df_inference[base_11_features]
 
             prediction = None
             try:
-                if "ML6" in model_choice:  # Нейросеть
+                if "ML6" in model_choice:  # Глубокая нейросеть
                     expected_features = model.input_shape[1]
-                    features_matrix = df_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_no_target.to_numpy(dtype=np.float32)
-                    raw_res = model.predict(features_matrix, verbose=0)
-                    prediction = raw_res.flatten()[0]
-                else:  # Классика, CatBoost, Ансамбли
+                    matrix = df_inference_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_inference.to_numpy(dtype=np.float32)
+                    raw_res = model.predict(matrix, verbose=0)
+                    prediction = raw_res
+                else:  # Для ВСЕХ остальных моделей (ML1 - ML5) передаем наш идеальный DataFrame
                     try:
-                        # Попытка 1: Скармливаем полную структуру, как на обучении (с таргетом-заглушкой)
-                        raw_res = model.predict(df_full)
-                        prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
+                        prediction = model.predict(df_inference)
                     except ValueError:
-                        try:
-                            # Попытка 2: Без таргета
-                            raw_res = model.predict(df_no_target)
-                            prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
-                        except ValueError:
-                            # Попытка 3: Только 11 фичей
-                            raw_res = model.predict(df_11)
-                            prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
+                        # На случай, если модель была случайно обучена только на 11 базовых датчиках
+                        prediction = model.predict(df_inference_11)
 
-                # Финальное извлечение скаляра
-                if isinstance(prediction, (np.ndarray, list)):
-                    prediction = float(np.array(prediction).flatten()[0])
-                else:
-                    prediction = float(prediction)
+                # Универсальная распаковка ndarray (для фикса CatBoost и Sklearn массивов)
+                if hasattr(prediction, "flatten"):
+                    prediction = prediction.flatten()[0]
+                if isinstance(prediction, (list, np.ndarray)):
+                    prediction = prediction[0]
+                
+                prediction = float(prediction)
 
             except Exception as e:
                 st.error(f"Ошибка вызова математического ядра: {e}")
@@ -305,10 +297,10 @@ elif page == "Страница 4: Предсказание модели":
         user_df = None
 
         if data_source == "Использовать демонстрационный датасет":
-            demo_file_path = "Regression_data.csv" 
+            demo_file_path = "Regression_data.csv"  # Используем твой же файл как демо!
             if os.path.exists(demo_file_path):
                 user_df = pd.read_csv(demo_file_path)
-                st.info("Загружен демонстрационный датасет из репозитория.")
+                st.info("Загружен демонстрационный датасет.")
             else:
                 st.warning(f"Файл `{demo_file_path}` не найден в репозитории. Пожалуйста, загрузите его вручную.")
         
@@ -322,53 +314,46 @@ elif page == "Страница 4: Предсказание модели":
             st.dataframe(user_df.head(5))
 
             if st.button("Запустить пакетный расчет всего файла", type="secondary"):
+                # Проверяем, есть ли в загруженном файле хотя бы 11 базовых колонок датчиков
                 missing_cols = [col for col in base_11_features if col not in user_df.columns]
                 
                 if not missing_cols:
                     try:
                         batch_df = user_df.copy()
                         
-                        # Если файл пришел сырой (только 11 признаков), достраиваем структуру обучения
+                        # Если файл сырой (только датчики), достраиваем 23 колонки в эталонном регистре
                         if "Hour" not in batch_df.columns:
-                            batch_df["CO(GT)"] = 0.0  # Заглушка
+                            batch_df["Year"] = chosen_date.year
+                            batch_df["Month"] = chosen_date.month
+                            batch_df["Day"] = chosen_date.day
                             batch_df["Hour"] = chosen_hour
                             weekday = chosen_date.weekday()
-                            batch_df["DayName"] = days_eng[weekday]
                             batch_df["IsWeekend"] = 1 if weekday >= 5 else 0
                             
-                            for day_col in ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]:
+                            days_list = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
+                            for day_col in days_list:
                                 batch_df[day_col] = 0
-                            batch_df[f"Day_{days_eng[weekday]}"] = 1
+                            batch_df[days_list[weekday]] = 1
 
-                        # Обеспечиваем гарантированный порядок колонок перед передачей в .predict()
-                        # Проверяем, есть ли CO(GT) в таблице, если нет — добавляем пустышку
-                        if "CO(GT)" not in batch_df.columns:
-                            batch_df["CO(GT)"] = 0.0
-
-                        df_batch_full = batch_df[exact_train_columns]
-                        df_batch_11 = batch_df[base_11_features]
-                        df_batch_no_target = df_batch_full.drop(columns=["CO(GT)"])
+                        # Фильтруем и выстраиваем колонки строго по эталону
+                        df_b23 = batch_df[exact_features_23]
+                        df_b11 = batch_df[base_11_features]
 
                         # Пакетный расчет
                         if "ML6" in model_choice:
                             expected_features = model.input_shape[1]
-                            matrix = df_batch_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_batch_no_target.to_numpy(dtype=np.float32)
+                            matrix = df_b11.to_numpy(dtype=np.float32) if expected_features == 11 else df_b23.to_numpy(dtype=np.float32)
                             raw_preds = model.predict(matrix, verbose=0)
-                            predictions_array = raw_preds.flatten()
                         else:
                             try:
-                                raw_preds = model.predict(df_batch_full)
+                                raw_preds = model.predict(df_b23)
                             except ValueError:
-                                try:
-                                    raw_preds = model.predict(df_batch_no_target)
-                                except ValueError:
-                                    raw_preds = model.predict(df_batch_11)
-                            
-                            if hasattr(raw_preds, "flatten"):
-                                predictions_array = raw_preds.flatten()
-                            else:
-                                predictions_array = np.array(raw_preds).flatten()
+                                raw_preds = model.predict(df_b11)
+                        
+                        # Безопасно уплощаем любой формат вывода в одномерный массив
+                        predictions_array = np.array(raw_preds).flatten()
 
+                        # Записываем результаты в итоговый файл
                         result_df = user_df.copy()
                         result_df["Predicted_CO(GT)"] = predictions_array
 
