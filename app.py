@@ -235,4 +235,107 @@ elif page == "Страница 4: Предсказание модели":
                 "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
             ]
 
-            # Создаем DataFrame'ы нужной гео
+            df_11 = pd.DataFrame([[s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah]], columns=base_11_features)
+            
+            df_23 = pd.DataFrame([[
+                s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
+                year, month, day, chosen_hour, is_weekend,
+                days_ohe["Day_Monday"], days_ohe["Day_Tuesday"], days_ohe["Day_Wednesday"],
+                days_ohe["Day_Thursday"], days_ohe["Day_Friday"], days_ohe["Day_Saturday"], days_ohe["Day_Sunday"]
+            ]], columns=extended_columns)
+
+            # Датафрейм-заглушка с таргетом для старых PyCaret моделей
+            df_pycaret = df_23.copy()
+            df_pycaret["CO(GT)"] = 0.0
+
+            # 5. Интеллектуальный каскадный блок инференса (фикс багов ndarray и CatBoost)
+            prediction = None
+            try:
+                if "ML6" in model_choice:  # Глубокая нейросеть Keras/TensorFlow
+                    expected_features = model.input_shape[1]
+                    features_matrix = df_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_23.to_numpy(dtype=np.float32)
+                    raw_res = model.predict(features_matrix, verbose=0)
+                    prediction = raw_res.flatten()[0]
+                else:  # Классические модели, CatBoost, Ансамбли
+                    try:
+                        raw_res = model.predict(df_23)
+                        prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
+                    except ValueError:
+                        try:
+                            raw_res = model.predict(df_pycaret)
+                            prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
+                        except ValueError:
+                            raw_res = model.predict(df_11)
+                            prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
+
+                # Финальная распаковка, если на выходе остался вложенный массив
+                if isinstance(prediction, (np.ndarray, list)):
+                    prediction = float(np.array(prediction).flatten()[0])
+                else:
+                    prediction = float(prediction)
+
+            except Exception as e:
+                st.error(f"Ошибка вызова математического ядра: {e}")
+                prediction = None
+
+            # 6. Вывод результатов расчета с экологическим зонированием
+            if prediction is not None:
+                st.markdown("### Результат расчета:")
+                st.metric(label="Прогнозируемая концентрация CO(GT)", value=f"{prediction:.2f} мг/м³")
+
+                if prediction < 1.5:
+                    st.success("Уровень воздуха: Безопасный (Концентрация в пределах нормы)")
+                elif 1.5 <= prediction < 3.5:
+                    st.warning("Уровень воздуха: Умеренное загрязнение (Рекомендуется проветривание)")
+                else:
+                    st.error("Уровень воздуха: ОПАСНО! (Зафиксирован критический выброс CO)")
+
+        # ==========================================================
+        # БЛОК 2: ПАКЕТНЫЙ ИНФЕРЕНС ИЗ ФАЙЛОВ (.CSV)
+        # ==========================================================
+        st.markdown("---")
+        st.markdown("### Пакетный инференс (Загрузка файла данных)")
+        uploaded_file = st.file_uploader("Выберите файл данных в формате *.csv для массового расчета:", type="csv")
+
+        if uploaded_file is not None:
+            user_df = pd.read_csv(uploaded_file)
+            st.markdown("**Фрагмент загруженного файла (Первые 5 строк):**")
+            st.dataframe(user_df.head(5))
+
+            if st.button("Запустить пакетный расчет всего файла", type="secondary"):
+                base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
+                
+                # Проверяем, есть ли хотя бы 11 базовых колонок датчиков в загруженном файле
+                missing_cols = [col for col in base_11_features if col not in user_df.columns]
+                
+                if not missing_cols:
+                    try:
+                        batch_features = user_df[base_11_features]
+                        
+                        # Векторизованный параллельный инференс
+                        if "ML6" in model_choice:
+                            raw_preds = model.predict(batch_features.to_numpy(dtype=np.float32), verbose=0)
+                            predictions_array = raw_preds.flatten()
+                        else:
+                            raw_preds = model.predict(batch_features)
+                            predictions_array = raw_preds.flatten()
+
+                        # Интеграция вектора предсказаний обратно в файл
+                        result_df = user_df.copy()
+                        result_df["Predicted_CO(GT)"] = predictions_array
+
+                        st.success(f"Массовый расчет завершен! Успешно обработано строк: {len(result_df)}")
+                        st.dataframe(result_df.head(10))
+
+                        # Генерация кнопки скачивания готовой таблицы
+                        csv_buffer = result_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Скачать файл с результатами предсказаний",
+                            data=csv_buffer,
+                            file_name="air_quality_predictions.csv",
+                            mime="text/csv"
+                        )
+                    except Exception as batch_error:
+                        st.error(f"Ошибка при обработке массива данных: {batch_error}")
+                else:
+                    st.error(f"В загруженном CSV отсутствуют необходимые колонки факторов: {missing_cols}")
