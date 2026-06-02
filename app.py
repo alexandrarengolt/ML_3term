@@ -57,7 +57,7 @@ if page == "Страница 1: Разработчик":
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.image(r"C:\Users\Александра\Desktop\ml-labs\Practice\lil_sonya.png", caption="Фото разработчика", width="stretch")
+        st.image("lil_sonya.png", caption="Фото разработчика", width="stretch")
         
     with col2:
         st.markdown("""
@@ -118,19 +118,19 @@ elif page == "Страница 3: Визуализация зависимост�
 
     with col1:
         st.subheader("Связь между целевым признаком и сенсорами")
-        st.image(r"C:\Users\Александра\Desktop\ml-labs\notebooks\plot1.png", width="stretch")
+        st.image("plot1.png", width="stretch")
 
         st.subheader("Матрица корреляции")
-        st.image(r"C:\Users\Александра\Desktop\ml-labs\notebooks\matrix.png", width="stretch")
+        st.image("matrix.png", width="stretch")
 
 
     with col2:
         st.subheader("Анализ выбросов и диапазонов (Box Plot)")
-        st.image(r"C:\Users\Александра\Desktop\ml-labs\notebooks\boxplot.png",  width="stretch")
+        st.image("boxplot.png",  width="stretch")
 
 
         st.subheader("Концентрация CO(GT) по часам")
-        st.image(r"C:\Users\Александра\Desktop\ml-labs\notebooks\plot3.png",  width="stretch")
+        st.image("plot3.png",  width="stretch")
 
 
 #СТРАНИЦА 4
