@@ -198,7 +198,7 @@ elif page == "Страница 4: Предсказание модели":
             no2 = st.number_input("NO2(GT)", min_value=0.0, max_value=500.0, value=100.0)
             
             chosen_date = st.date_input("Выберите дату:")
-            chosen_hour = st.slider("Выберите час (hour):", min_value=0, max_value=23, value=12)
+            chosen_hour = st.slider("Выберите час (Hour):", min_value=0, max_value=23, value=12)
 
         with col_input3:
             st.markdown("##### Метеоусловия")
@@ -208,67 +208,69 @@ elif page == "Страница 4: Предсказание модели":
 
         st.markdown("---")
 
+        # 11 базовых признаков в строгом порядке
+        base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
+        
+        # Точный расширенный список колонок, совпадающий с твоим обучением (включая таргет в начале)
+        exact_train_columns = [
+            "CO(GT)", "PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", 
+            "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH", 
+            "Hour", "DayName", "IsWeekend", 
+            "Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
+        ]
+
         # КНОПКА ЗАПУСКА ОДИНОЧНОГО РАСЧЕТА
         if st.button("Рассчитать концентрацию CO(GT)", type="primary"):
-            # 1. Расчет временных фичей на лету (Feature Engineering)
-            year = chosen_date.year
-            month = chosen_date.month
-            day = chosen_date.day
+            # Расчет фичей времени по твоим правилам
             weekday = chosen_date.weekday()
-            is_weekend = 1 if weekday >= 5 else 0
+            is_weekend_val = 1 if weekday >= 5 else 0
+            
+            days_eng = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            day_name_val = days_eng[weekday]
 
-            # 2. Строгий One-Hot Encoding для дней недели с префиксами "Day_" (как на обучении)
             days_ohe = {
                 "Day_Monday": 0, "Day_Tuesday": 0, "Day_Wednesday": 0, 
                 "Day_Thursday": 0, "Day_Friday": 0, "Day_Saturday": 0, "Day_Sunday": 0
             }
-            days_mapping = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
-            days_ohe[days_mapping[weekday]] = 1
+            days_ohe[f"Day_{day_name_val}"] = 1
 
-            # 3. Базовый набор из 11 признаков (для нейросети ML6)
-            base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
-
-            # 4. Расширенный набор из 23 признаков со строгими именами (для классики и бустингов)
-            extended_columns = base_11_features + [
-                "year", "month", "Day", "hour", "is_weekend", 
-                "Day_Monday", "Day_Tuesday", "Day_Wednesday", 
-                "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
-            ]
-
-            df_11 = pd.DataFrame([[s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah]], columns=base_11_features)
-            
-            df_23 = pd.DataFrame([[
-                s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
-                year, month, day, chosen_hour, is_weekend,
+            # Собираем DataFrame по твоему точному порядку колонок (с заглушкой 0.0 для таргета на первом месте)
+            df_full = pd.DataFrame([[
+                0.0, s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
+                chosen_hour, day_name_val, is_weekend_val,
                 days_ohe["Day_Monday"], days_ohe["Day_Tuesday"], days_ohe["Day_Wednesday"],
                 days_ohe["Day_Thursday"], days_ohe["Day_Friday"], days_ohe["Day_Saturday"], days_ohe["Day_Sunday"]
-            ]], columns=extended_columns)
+            ]], columns=exact_train_columns)
 
-            # Датафрейм-заглушка с таргетом для старых PyCaret моделей
-            df_pycaret = df_23.copy()
-            df_pycaret["CO(GT)"] = 0.0
+            # Матрица для нейросетей (чистые 11 фичей)
+            df_11 = df_full[base_11_features]
+            
+            # Матрица без таргета (на случай, если какая-то модель строго просит 21 признак без CO(GT))
+            df_no_target = df_full.drop(columns=["CO(GT)"])
 
-            # 5. Интеллектуальный каскадный блок инференса (фикс багов ndarray и CatBoost)
             prediction = None
             try:
-                if "ML6" in model_choice:  # Глубокая нейросеть Keras/TensorFlow
+                if "ML6" in model_choice:  # Нейросеть
                     expected_features = model.input_shape[1]
-                    features_matrix = df_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_23.to_numpy(dtype=np.float32)
+                    features_matrix = df_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_no_target.to_numpy(dtype=np.float32)
                     raw_res = model.predict(features_matrix, verbose=0)
                     prediction = raw_res.flatten()[0]
-                else:  # Классические модели, CatBoost, Ансамбли
+                else:  # Классика, CatBoost, Ансамбли
                     try:
-                        raw_res = model.predict(df_23)
+                        # Попытка 1: Скармливаем полную структуру, как на обучении (с таргетом-заглушкой)
+                        raw_res = model.predict(df_full)
                         prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
                     except ValueError:
                         try:
-                            raw_res = model.predict(df_pycaret)
+                            # Попытка 2: Без таргета
+                            raw_res = model.predict(df_no_target)
                             prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
                         except ValueError:
+                            # Попытка 3: Только 11 фичей
                             raw_res = model.predict(df_11)
                             prediction = raw_res[0] if isinstance(raw_res, np.ndarray) else raw_res
 
-                # Финальная распаковка, если на выходе остался вложенный массив
+                # Финальное извлечение скаляра
                 if isinstance(prediction, (np.ndarray, list)):
                     prediction = float(np.array(prediction).flatten()[0])
                 else:
@@ -278,7 +280,6 @@ elif page == "Страница 4: Предсказание модели":
                 st.error(f"Ошибка вызова математического ядра: {e}")
                 prediction = None
 
-            # 6. Вывод результатов расчета с экологическим зонированием
             if prediction is not None:
                 st.markdown("### Результат расчета:")
                 st.metric(label="Прогнозируемая концентрация CO(GT)", value=f"{prediction:.2f} мг/м³")
@@ -290,9 +291,6 @@ elif page == "Страница 4: Предсказание модели":
                 else:
                     st.error("Уровень воздуха: ОПАСНО! (Зафиксирован критический выброс CO)")
 
-        # ==========================================================
-        # БЛОК 2: ПАКЕТНЫЙ ИНФЕРЕНС ИЗ ФАЙЛОВ (.CSV)
-        # ==========================================================
         # ==========================================================
         # БЛОК 2: ПАКЕТНЫЙ ИНФЕРЕНС ИЗ ФАЙЛОВ (.CSV)
         # ==========================================================
@@ -324,73 +322,59 @@ elif page == "Страница 4: Предсказание модели":
             st.dataframe(user_df.head(5))
 
             if st.button("Запустить пакетный расчет всего файла", type="secondary"):
-                base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
-                
-                # Проверяем наличие 11 базовых колонок
                 missing_cols = [col for col in base_11_features if col not in user_df.columns]
                 
                 if not missing_cols:
                     try:
-                        # Автоматический Feature Engineering для пакета данных
                         batch_df = user_df.copy()
                         
-                        # Если в датасете нет временных колонок, создаем дефолтные (как в интерфейсе)
-                        if "year" not in batch_df.columns:
-                            batch_df["year"] = chosen_date.year
-                            batch_df["month"] = chosen_date.month
-                            batch_df["Day"] = chosen_date.day
-                            batch_df["hour"] = chosen_hour
+                        # Если файл пришел сырой (только 11 признаков), достраиваем структуру обучения
+                        if "Hour" not in batch_df.columns:
+                            batch_df["CO(GT)"] = 0.0  # Заглушка
+                            batch_df["Hour"] = chosen_hour
                             weekday = chosen_date.weekday()
-                            batch_df["is_weekend"] = 1 if weekday >= 5 else 0
+                            batch_df["DayName"] = days_eng[weekday]
+                            batch_df["IsWeekend"] = 1 if weekday >= 5 else 0
                             
-                            # Генерируем One-Hot Encoding для дней недели со строгими префиксами "Day_"
-                            days_mapping = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
-                            for day_col in days_mapping:
+                            for day_col in ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]:
                                 batch_df[day_col] = 0
-                            batch_df[days_mapping[weekday]] = 1
+                            batch_df[f"Day_{days_eng[weekday]}"] = 1
 
-                        # Формируем матрицы нужной геометрии для проверки моделей
-                        extended_columns = base_11_features + [
-                            "year", "month", "Day", "hour", "is_weekend", 
-                            "Day_Monday", "Day_Tuesday", "Day_Wednesday", 
-                            "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"
-                        ]
-                        
+                        # Обеспечиваем гарантированный порядок колонок перед передачей в .predict()
+                        # Проверяем, есть ли CO(GT) в таблице, если нет — добавляем пустышку
+                        if "CO(GT)" not in batch_df.columns:
+                            batch_df["CO(GT)"] = 0.0
+
+                        df_batch_full = batch_df[exact_train_columns]
                         df_batch_11 = batch_df[base_11_features]
-                        df_batch_23 = batch_df[extended_columns]
-                        df_batch_pycaret = df_batch_23.copy()
-                        df_batch_pycaret["CO(GT)"] = 0.0
+                        df_batch_no_target = df_batch_full.drop(columns=["CO(GT)"])
 
-                        # Безопасный инференс для пакета данных
-                        if "ML6" in model_choice:  # Нейросеть
+                        # Пакетный расчет
+                        if "ML6" in model_choice:
                             expected_features = model.input_shape[1]
-                            features_matrix = df_batch_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_batch_23.to_numpy(dtype=np.float32)
-                            raw_preds = model.predict(features_matrix, verbose=0)
+                            matrix = df_batch_11.to_numpy(dtype=np.float32) if expected_features == 11 else df_batch_no_target.to_numpy(dtype=np.float32)
+                            raw_preds = model.predict(matrix, verbose=0)
                             predictions_array = raw_preds.flatten()
-                        else:  # Классика, CatBoost, Ансамбли
+                        else:
                             try:
-                                raw_preds = model.predict(df_batch_23)
+                                raw_preds = model.predict(df_batch_full)
                             except ValueError:
                                 try:
-                                    raw_preds = model.predict(df_batch_pycaret)
+                                    raw_preds = model.predict(df_batch_no_target)
                                 except ValueError:
                                     raw_preds = model.predict(df_batch_11)
                             
-                            # Фикс ошибки 'numpy.ndarray' object has no attribute 'predict'
-                            # Извлекаем одномерный массив, если модель вернула матрицу или сложный объект
                             if hasattr(raw_preds, "flatten"):
                                 predictions_array = raw_preds.flatten()
                             else:
                                 predictions_array = np.array(raw_preds).flatten()
 
-                        # Интеграция результатов в итоговую таблицу
                         result_df = user_df.copy()
                         result_df["Predicted_CO(GT)"] = predictions_array
 
                         st.success(f"Массовый расчет завершен! Успешно обработано строк: {len(result_df)}")
                         st.dataframe(result_df.head(10))
 
-                        # Генерация кнопки скачивания
                         csv_buffer = result_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             label="Скачать файл с результатами предсказаний",
