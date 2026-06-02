@@ -228,28 +228,28 @@ elif page == "Страница 4: Предсказание модели":
         weekday = chosen_date.weekday()
         is_weekend = 1 if weekday >= 5 else 0
 
-        days_ohe = {"Monday": 0, "Tuesday": 0, "Wednesday": 0, "Thursday": 0, "Friday": 0, "Saturday": 0, "Sunday": 0}
-        days_mapping = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        days_ohe = {
+            "Day_Monday": 0, "Day_Tuesday": 0, "Day_Wednesday": 0, 
+            "Day_Thursday": 0, "Day_Friday": 0, "Day_Saturday": 0, "Day_Sunday": 0
+        }
+        days_mapping = ["Day_Monday", "Day_Tuesday", "Day_Wednesday", "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"]
+        weekday = chosen_date.weekday()
         days_ohe[days_mapping[weekday]] = 1
-        
-        # Наборы колонок для сборки
-        base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
-        
-        all_23_features = base_11_features + [
-            "year", "month", "day", "hour", "is_weekend",
-            "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
-        ]
 
-        # Создаем DataFrame на 11 признаков
-        df_11 = pd.DataFrame([[s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah]], columns=base_11_features)
-        
-        # Создаем DataFrame на 23 признака
+# 2. Собираем точный список 23 колонок, соответствующий обучению
+        base_11_features = ["PT08.S1(CO)", "C6H6(GT)", "PT08.S2(NMHC)", "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)", "T", "RH", "AH"]
+
+# Создаем расширенный датафрейм сразу с правильными именами колонок
         df_23 = pd.DataFrame([[
             s1, c6h6, s2, nox, s3, no2, s4, s5, temp, rh, ah,
-            year, month, day, hour, is_weekend,
-            days_ohe["Monday"], days_ohe["Tuesday"], days_ohe["Wednesday"],
-            days_ohe["Thursday"], days_ohe["Friday"], days_ohe["Saturday"], days_ohe["Sunday"]
-        ]], columns=all_23_features)
+            chosen_date.year, chosen_date.month, chosen_date.day, chosen_hour, is_weekend,
+            days_ohe["Day_Monday"], days_ohe["Day_Tuesday"], days_ohe["Day_Wednesday"],
+            days_ohe["Day_Thursday"], days_ohe["Day_Friday"], days_ohe["Day_Saturday"], days_ohe["Day_Sunday"]
+            ]], columns=base_11_features + ["year", "month", "Day", "hour", "is_weekend", 
+                                "Day_Monday", "Day_Tuesday", "Day_Wednesday", 
+                                "Day_Thursday", "Day_Friday", "Day_Saturday", "Day_Sunday"])
+
+# Обрати внимание: в списке колонок выше "Day", "Day_Monday" и т.д. написаны с большой буквы!
 
         # Создаем специальный DataFrame для пайплайнов PyCaret (включая имя целевой переменной, если она нужна)
         df_pycaret = df_23.copy()
