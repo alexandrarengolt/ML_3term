@@ -305,7 +305,7 @@ elif page == "Страница 4: Предсказание модели":
         user_df = None
 
         if data_source == "Использовать демонстрационный датасет":
-            demo_file_path = "X_test.csv" 
+            demo_file_path = "Regression_data.csv" 
             if os.path.exists(demo_file_path):
                 user_df = pd.read_csv(demo_file_path)
                 st.info("Загружен демонстрационный датасет из репозитория.")
