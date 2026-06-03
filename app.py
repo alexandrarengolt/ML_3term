@@ -273,6 +273,7 @@ elif page == "Страница 4: Предсказание модели":
                 prediction = None
 
             if prediction is not None:
+                prediction = max(0.0, prediction)
                 st.markdown("### Результат расчета:")
                 st.metric(label="Прогнозируемая концентрация CO(GT)", value=f"{prediction:.2f} мг/м³")
 
